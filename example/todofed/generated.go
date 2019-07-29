@@ -260,38 +260,76 @@ func (ec *executionContext) introspectType(name string) (*introspection.Type, er
 func (ec *executionContext) introspectService() (*federation.Service, error) {
 	var buf bytes.Buffer
 	f := formatter.NewFormatter(&buf)
-	f.FormatSchema(parsedSchema)
+	f.FormatSchema(originalSchema)
 	return &federation.Service{SDL: buf.String()}, nil
 }
 
 var parsedSchema = gqlparser.MustLoadSchema(
-	&ast.Source{Name: "federation", Input: `
-	scalar _FieldSet
+	&ast.Source{Name: "merged_schema", Input: `directive @key(fields: _FieldSet!) on OBJECT | INTERFACE
+type Item @key(fields: "id") {
+	id: ID!
+	name: String!
+	done: Boolean
+}
+type Mutation {
+	createTodo(input: NewTodo!): Todo!
+}
+input NewTodo {
+	text: String!
+	userId: String!
+}
+type Query {
+	todos: [Todo!]!
+	_service: _Service
+}
+union Thing = Item | Todo
+type Todo @key(fields: "id") {
+	id: ID!
+	text: String!
+	done: Boolean!
+	user: User!
+}
+type User {
+	id: ID!
+	name: String!
+}
+union _Entity = Todo | Item
+scalar _FieldSet
+type _Service {
+	sdl: String
+}
+`},
+)
 
-	type _Service { sdl: String }
-	extend type Query { _service: _Service }
+var originalSchema = gqlparser.MustLoadSchema(
+	&ast.Source{Name: "federation", Input: `# federation schema add-on
+scalar _FieldSet
 
-	directive @key(fields: _FieldSet!) on OBJECT | INTERFACE
-	`},
+type _Service { sdl: String }
+extend type Query { _service: _Service }
+
+union _Entity
+
+directive @key(fields: _FieldSet!) on OBJECT | INTERFACE
+`, BuiltIn: true},
 	&ast.Source{Name: "schema.graphql", Input: `# GraphQL schema example
 #
 # https://gqlgen.com/getting-started/
 
-type Todo {
+type Todo @key(fields: "id") {
   id: ID!
   text: String!
   done: Boolean!
   user: User!
 }
 
-type Item {
+type Item @key(fields: "id") {
   id: ID!
   name: String!
   done: Boolean
 }
 
 union Thing = Item | Todo
-union Entity
 
 type User {
   id: ID!
@@ -2127,15 +2165,6 @@ func (ec *executionContext) unmarshalInputNewTodo(ctx context.Context, obj inter
 
 // region    ************************** interface.gotpl ***************************
 
-func (ec *executionContext) _Entity(ctx context.Context, sel ast.SelectionSet, obj *Entity) graphql.Marshaler {
-	switch obj := (*obj).(type) {
-	case nil:
-		return graphql.Null
-	default:
-		panic(fmt.Errorf("unexpected type %T", obj))
-	}
-}
-
 func (ec *executionContext) _Thing(ctx context.Context, sel ast.SelectionSet, obj *Thing) graphql.Marshaler {
 	switch obj := (*obj).(type) {
 	case nil:
@@ -2153,11 +2182,28 @@ func (ec *executionContext) _Thing(ctx context.Context, sel ast.SelectionSet, ob
 	}
 }
 
+func (ec *executionContext) __Entity(ctx context.Context, sel ast.SelectionSet, obj *federation.Entity) graphql.Marshaler {
+	switch obj := (*obj).(type) {
+	case nil:
+		return graphql.Null
+	case Todo:
+		return ec._Todo(ctx, sel, &obj)
+	case *Todo:
+		return ec._Todo(ctx, sel, obj)
+	case Item:
+		return ec._Item(ctx, sel, &obj)
+	case *Item:
+		return ec._Item(ctx, sel, obj)
+	default:
+		panic(fmt.Errorf("unexpected type %T", obj))
+	}
+}
+
 // endregion ************************** interface.gotpl ***************************
 
 // region    **************************** object.gotpl ****************************
 
-var itemImplementors = []string{"Item", "Thing"}
+var itemImplementors = []string{"Item", "Thing", "_Entity"}
 
 func (ec *executionContext) _Item(ctx context.Context, sel ast.SelectionSet, obj *Item) graphql.Marshaler {
 	fields := graphql.CollectFields(ec.RequestContext, sel, itemImplementors)
@@ -2268,7 +2314,7 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 	return out
 }
 
-var todoImplementors = []string{"Todo", "Thing"}
+var todoImplementors = []string{"Todo", "Thing", "_Entity"}
 
 func (ec *executionContext) _Todo(ctx context.Context, sel ast.SelectionSet, obj *Todo) graphql.Marshaler {
 	fields := graphql.CollectFields(ec.RequestContext, sel, todoImplementors)

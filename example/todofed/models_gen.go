@@ -2,10 +2,6 @@
 
 package todo
 
-type Entity interface {
-	IsEntity()
-}
-
 type Thing interface {
 	IsThing()
 }
@@ -16,7 +12,8 @@ type Item struct {
 	Done *bool  `json:"done"`
 }
 
-func (Item) IsThing() {}
+func (Item) IsThing()   {}
+func (Item) Is_Entity() {}
 
 type NewTodo struct {
 	Text   string `json:"text"`
@@ -30,7 +27,8 @@ type Todo struct {
 	User *User  `json:"user"`
 }
 
-func (Todo) IsThing() {}
+func (Todo) IsThing()   {}
+func (Todo) Is_Entity() {}
 
 type User struct {
 	ID   string `json:"id"`
