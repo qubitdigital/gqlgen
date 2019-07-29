@@ -28,6 +28,11 @@ type Config struct {
 	Models         TypeMap                    `yaml:"models,omitempty"`
 	StructTag      string                     `yaml:"struct_tag,omitempty"`
 	Directives     map[string]DirectiveConfig `yaml:"directives,omitempty"`
+	schemaAddons   []*ast.Source
+}
+
+func (c *Config) AddToSchema(s *ast.Source) {
+	c.schemaAddons = append(c.schemaAddons, s)
 }
 
 var cfgFilenames = []string{".gqlgen.yml", "gqlgen.yml", "gqlgen.yaml"}
@@ -384,6 +389,12 @@ func (c *Config) normalize() error {
 	return nil
 }
 
+func (c *Config) Init() {
+	if c.Models == nil {
+		c.Models = TypeMap{}
+	}
+}
+
 func (c *Config) Autobind(s *ast.Schema) error {
 	if len(c.AutoBind) == 0 {
 		return nil
@@ -470,13 +481,16 @@ func (c *Config) LoadSchema() (*ast.Schema, map[string]string, error) {
 			fmt.Fprintln(os.Stderr, "unable to open schema: "+err.Error())
 			os.Exit(1)
 		}
-		schemaStrings[filename] = string(schemaRaw)
-		sources = append(sources, &ast.Source{Name: filename, Input: schemaStrings[filename]})
+		sources = append(sources, &ast.Source{Name: filename, Input: string(schemaRaw)})
 	}
 
+	sources = append(c.schemaAddons, sources...)
 	schema, err := gqlparser.LoadSchema(sources...)
 	if err != nil {
 		return nil, nil, err
+	}
+	for _, source := range sources {
+		schemaStrings[source.Name] = source.Input
 	}
 	return schema, schemaStrings, nil
 }

@@ -10,8 +10,10 @@
 
 {{ reserveImport "github.com/vektah/gqlparser" }}
 {{ reserveImport "github.com/vektah/gqlparser/ast" }}
+{{ reserveImport "github.com/vektah/gqlparser/formatter" }}
 {{ reserveImport "github.com/99designs/gqlgen/graphql" }}
 {{ reserveImport "github.com/99designs/gqlgen/graphql/introspection" }}
+{{ reserveImport "github.com/99designs/gqlgen/plugin/federation" }}
 
 
 // NewExecutableSchema creates an ExecutableSchema from the ResolverRoot interface.
@@ -226,6 +228,13 @@ func (ec *executionContext) introspectType(name string) (*introspection.Type, er
 		return nil, errors.New("introspection disabled")
 	}
 	return introspection.WrapTypeFromDef(parsedSchema, parsedSchema.Types[name]), nil
+}
+
+func (ec *executionContext) introspectService() (*federation.Service, error) {
+	var buf bytes.Buffer
+	f := formatter.NewFormatter(&buf)
+	f.FormatSchema(parsedSchema)
+	return &federation.Service{SDL: buf.String()}, nil
 }
 
 var parsedSchema = gqlparser.MustLoadSchema(

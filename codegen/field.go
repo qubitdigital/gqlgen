@@ -95,6 +95,11 @@ func (b *builder) bindField(obj *Object, f *Field) error {
 		f.GoReceiverName = "ec"
 		f.GoFieldName = "introspectType"
 		return nil
+	case f.Name == "_service" && obj.Root:
+		f.GoFieldType = GoFieldMethod
+		f.GoReceiverName = "ec"
+		f.GoFieldName = "introspectService"
+		return nil
 	case obj.Root:
 		f.IsResolver = true
 		return nil

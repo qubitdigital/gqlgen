@@ -6,6 +6,7 @@ import (
 	"github.com/99designs/gqlgen/codegen"
 	"github.com/99designs/gqlgen/codegen/config"
 	"github.com/99designs/gqlgen/plugin"
+	"github.com/99designs/gqlgen/plugin/federation"
 	"github.com/99designs/gqlgen/plugin/modelgen"
 	"github.com/99designs/gqlgen/plugin/resolvergen"
 	"github.com/99designs/gqlgen/plugin/schemaconfig"
@@ -18,6 +19,7 @@ func Generate(cfg *config.Config, option ...Option) error {
 	_ = syscall.Unlink(cfg.Model.Filename)
 
 	plugins := []plugin.Plugin{
+		federation.New(),
 		schemaconfig.New(),
 		modelgen.New(),
 		resolvergen.New(),
