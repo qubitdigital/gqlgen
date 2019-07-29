@@ -29,10 +29,28 @@ type Config struct {
 	StructTag      string                     `yaml:"struct_tag,omitempty"`
 	Directives     map[string]DirectiveConfig `yaml:"directives,omitempty"`
 	schemaAddons   []*ast.Source
+	schemaSources  []*ast.Source
+	schemaMutators []SchemaMutator
+}
+
+type SchemaMutator interface {
+	MutateSchema(s *ast.Schema) error
 }
 
 func (c *Config) AddToSchema(s *ast.Source) {
 	c.schemaAddons = append(c.schemaAddons, s)
+}
+
+func (c *Config) AddMutator(m SchemaMutator) {
+	c.schemaMutators = append(c.schemaMutators, m)
+}
+
+func (c *Config) Sources() []*ast.Source {
+	return c.schemaSources
+}
+
+func (c *Config) AddOns() []*ast.Source {
+	return c.schemaAddons
 }
 
 var cfgFilenames = []string{".gqlgen.yml", "gqlgen.yml", "gqlgen.yaml"}
@@ -481,16 +499,22 @@ func (c *Config) LoadSchema() (*ast.Schema, map[string]string, error) {
 			fmt.Fprintln(os.Stderr, "unable to open schema: "+err.Error())
 			os.Exit(1)
 		}
+		schemaStrings[filename] = string(schemaRaw)
 		sources = append(sources, &ast.Source{Name: filename, Input: string(schemaRaw)})
 	}
+	c.schemaSources = make([]*ast.Source, len(sources))
+	copy(c.schemaSources, sources)
 
 	sources = append(c.schemaAddons, sources...)
 	schema, err := gqlparser.LoadSchema(sources...)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, source := range sources {
-		schemaStrings[source.Name] = source.Input
+	for _, m := range c.schemaMutators {
+		err := m.MutateSchema(schema)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	return schema, schemaStrings, nil
 }

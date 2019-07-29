@@ -233,12 +233,19 @@ func (ec *executionContext) introspectType(name string) (*introspection.Type, er
 func (ec *executionContext) introspectService() (*federation.Service, error) {
 	var buf bytes.Buffer
 	f := formatter.NewFormatter(&buf)
-	f.FormatSchema(parsedSchema)
+	f.FormatSchema(originalSchema)
 	return &federation.Service{SDL: buf.String()}, nil
 }
 
 var parsedSchema = gqlparser.MustLoadSchema(
-	{{- range $filename, $schema := .SchemaStr }}
-		&ast.Source{Name: {{$filename|quote}}, Input: {{$schema|rawQuote}}},
+	&ast.Source{Name: "merged_schema", Input: {{.SchemaStr|rawQuote}}},
+)
+
+var originalSchema = gqlparser.MustLoadSchema(
+	{{- range $i, $src := .Config.AddOns }}
+		&ast.Source{Name: "{{$src.Name}}", Input: {{$src.Input|rawQuote}}, BuiltIn: true},
+	{{- end }}
+	{{- range $i, $src := .Config.Sources }}
+		&ast.Source{Name: "{{$src.Name}}", Input: {{$src.Input|rawQuote}}},
 	{{- end }}
 )

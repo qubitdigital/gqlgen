@@ -1,8 +1,11 @@
 package codegen
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
+
+	"github.com/vektah/gqlparser/formatter"
 
 	"github.com/99designs/gqlgen/codegen/config"
 	"github.com/pkg/errors"
@@ -14,7 +17,7 @@ import (
 type Data struct {
 	Config          *config.Config
 	Schema          *ast.Schema
-	SchemaStr       map[string]string
+	SchemaStr       string
 	Directives      DirectiveList
 	Objects         Objects
 	Inputs          Objects
@@ -79,7 +82,7 @@ func BuildData(cfg *config.Config) (*Data, error) {
 		Config:     cfg,
 		Directives: dataDirectives,
 		Schema:     b.Schema,
-		SchemaStr:  b.SchemaStr,
+		SchemaStr:  formatSchema(b.Schema),
 		Interfaces: map[string]*Interface{},
 	}
 
@@ -170,4 +173,11 @@ func (b *builder) injectIntrospectionRoots(s *Data) error {
 	obj.Fields = append(obj.Fields, __type, __schema)
 
 	return nil
+}
+
+func formatSchema(s *ast.Schema) string {
+	var buf bytes.Buffer
+	f := formatter.NewFormatter(&buf)
+	f.FormatSchema(s)
+	return buf.String()
 }
