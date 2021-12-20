@@ -230,11 +230,11 @@ func (ec *executionContext) introspectType(name string) (*introspection.Type, er
 	return introspection.WrapTypeFromDef(parsedSchema, parsedSchema.Types[name]), nil
 }
 
-func (ec *executionContext) introspectService() (*federation.Service, error) {
+func (ec *executionContext) introspectService() (interface{}, error) {
 	var buf bytes.Buffer
 	f := formatter.NewFormatter(&buf)
 	f.FormatSchema(originalSchema)
-	return &federation.Service{SDL: buf.String()}, nil
+	return federation.Service{SDL: buf.String()}, nil
 }
 
 var parsedSchema = gqlparser.MustLoadSchema(
@@ -249,3 +249,17 @@ var originalSchema = gqlparser.MustLoadSchema(
 		&ast.Source{Name: "{{$src.Name}}", Input: {{$src.Input|rawQuote}}},
 	{{- end }}
 )
+
+func (ec *executionContext) resolveEntities(ctx context.Context, reps []map[string]interface{}) (res []federation.Entity, err error) {
+	for _, repr := range reps {
+		typename, _ := repr["__typename"]
+		switch typename {
+		{{- range $entity := .Entities }}
+			case {{$entity.Name | quote}}:
+				v, _ := ec.unmarshalRepr{{ $entity.Name }}(ctx, repr)
+				res = append(res, v)
+		{{- end }}
+		}
+	}
+	return
+}

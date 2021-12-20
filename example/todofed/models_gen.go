@@ -7,13 +7,21 @@ type Thing interface {
 }
 
 type Item struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Done *bool  `json:"done"`
+	ID     string    `json:"id"`
+	Name   string    `json:"name"`
+	Done   *bool     `json:"done"`
+	Fields *[]string `json:"fields"`
 }
 
 func (Item) IsThing()   {}
 func (Item) Is_Entity() {}
+
+type List struct {
+	ID    string  `json:"id"`
+	Todos []*Todo `json:"todos"`
+}
+
+func (List) Is_Entity() {}
 
 type NewTodo struct {
 	Text   string `json:"text"`

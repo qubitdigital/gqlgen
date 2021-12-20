@@ -13,6 +13,12 @@ type Item @key(fields: "id") {
   id: ID!
   name: String!
   done: Boolean
+  fields: _FieldSet
+}
+
+type List @key(fields: "id") {
+  id: ID! @external
+  todos: [Todo!]!
 }
 
 union Thing = Item | Todo

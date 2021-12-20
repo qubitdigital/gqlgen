@@ -27,6 +27,7 @@ type Object struct {
 	ResolverInterface  types.Type
 	Root               bool
 	Fields             []*Field
+	Externals          []*Field
 	Implements         []*ast.Definition
 	DisableConcurrency bool
 	Stream             bool
@@ -76,6 +77,11 @@ func (b *builder) buildObject(typ *ast.Definition) (*Object, error) {
 		}
 
 		obj.Fields = append(obj.Fields, f)
+		for _, dir := range f.Directives {
+			if dir.Name == "external" {
+				obj.Externals = append(obj.Externals, f)
+			}
+		}
 	}
 
 	return obj, nil

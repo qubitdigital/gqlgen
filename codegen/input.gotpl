@@ -46,3 +46,16 @@
 	}
 	{{- end }}
 {{ end }}
+
+{{- range $entity := .Entities }}
+	func (ec *executionContext) unmarshalRepr{{ .Name }}(ctx context.Context, repr map[string]interface{}) (federation.Entity, error) {
+		var it {{.Type | ref}}
+		var err error
+		{{- range $field := $entity.Externals }}
+			if v, ok := repr[{{ $field.Name | quote }}]; ok {
+				it.{{$field.GoFieldName}}, err = ec.{{ $field.TypeReference.UnmarshalFunc }}(ctx, v)
+			}
+		{{ end }}
+		return it, err
+	}
+{{ end }}

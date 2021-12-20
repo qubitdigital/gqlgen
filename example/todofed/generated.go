@@ -42,14 +42,20 @@ type ResolverRoot interface {
 }
 
 type DirectiveRoot struct {
-	Key func(ctx context.Context, obj interface{}, next graphql.Resolver, fields string) (res interface{}, err error)
+	Key func(ctx context.Context, obj interface{}, next graphql.Resolver, fields []string) (res interface{}, err error)
 }
 
 type ComplexityRoot struct {
 	Item struct {
-		Done func(childComplexity int) int
-		ID   func(childComplexity int) int
-		Name func(childComplexity int) int
+		Done   func(childComplexity int) int
+		Fields func(childComplexity int) int
+		ID     func(childComplexity int) int
+		Name   func(childComplexity int) int
+	}
+
+	List struct {
+		ID    func(childComplexity int) int
+		Todos func(childComplexity int) int
 	}
 
 	Mutation struct {
@@ -59,6 +65,7 @@ type ComplexityRoot struct {
 	Query struct {
 		Todos             func(childComplexity int) int
 		introspectService func(childComplexity int) int
+		resolveEntities   func(childComplexity int, representations []map[string]interface{}) int
 	}
 
 	Todo struct {
@@ -107,6 +114,13 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 
 		return e.complexity.Item.Done(childComplexity), true
 
+	case "Item.fields":
+		if e.complexity.Item.Fields == nil {
+			break
+		}
+
+		return e.complexity.Item.Fields(childComplexity), true
+
 	case "Item.id":
 		if e.complexity.Item.ID == nil {
 			break
@@ -120,6 +134,20 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 		}
 
 		return e.complexity.Item.Name(childComplexity), true
+
+	case "List.id":
+		if e.complexity.List.ID == nil {
+			break
+		}
+
+		return e.complexity.List.ID(childComplexity), true
+
+	case "List.todos":
+		if e.complexity.List.Todos == nil {
+			break
+		}
+
+		return e.complexity.List.Todos(childComplexity), true
 
 	case "Mutation.createTodo":
 		if e.complexity.Mutation.CreateTodo == nil {
@@ -146,6 +174,18 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 		}
 
 		return e.complexity.Query.introspectService(childComplexity), true
+
+	case "Query._entities":
+		if e.complexity.Query.resolveEntities == nil {
+			break
+		}
+
+		args, err := ec.field_Query__entities_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.resolveEntities(childComplexity, args["representations"].([]map[string]interface{})), true
 
 	case "Todo.done":
 		if e.complexity.Todo.Done == nil {
@@ -257,19 +297,25 @@ func (ec *executionContext) introspectType(name string) (*introspection.Type, er
 	return introspection.WrapTypeFromDef(parsedSchema, parsedSchema.Types[name]), nil
 }
 
-func (ec *executionContext) introspectService() (*federation.Service, error) {
+func (ec *executionContext) introspectService() (interface{}, error) {
 	var buf bytes.Buffer
 	f := formatter.NewFormatter(&buf)
 	f.FormatSchema(originalSchema)
-	return &federation.Service{SDL: buf.String()}, nil
+	return federation.Service{SDL: buf.String()}, nil
 }
 
 var parsedSchema = gqlparser.MustLoadSchema(
-	&ast.Source{Name: "merged_schema", Input: `directive @key(fields: _FieldSet!) on OBJECT | INTERFACE
+	&ast.Source{Name: "merged_schema", Input: `directive @external on FIELD_DEFINITION
+directive @key(fields: _FieldSet!) on OBJECT | INTERFACE
 type Item @key(fields: "id") {
 	id: ID!
 	name: String!
 	done: Boolean
+	fields: _FieldSet
+}
+type List @key(fields: "id") {
+	id: ID! @external
+	todos: [Todo!]!
 }
 type Mutation {
 	createTodo(input: NewTodo!): Todo!
@@ -280,7 +326,8 @@ input NewTodo {
 }
 type Query {
 	todos: [Todo!]!
-	_service: _Service
+	_service: _Service!
+	_entities(representations: [_Any!]!): [_Entity]!
 }
 union Thing = Item | Todo
 type Todo @key(fields: "id") {
@@ -293,7 +340,8 @@ type User {
 	id: ID!
 	name: String!
 }
-union _Entity = Todo | Item
+scalar _Any
+union _Entity = Todo | Item | List
 scalar _FieldSet
 type _Service {
 	sdl: String
@@ -303,14 +351,19 @@ type _Service {
 
 var originalSchema = gqlparser.MustLoadSchema(
 	&ast.Source{Name: "federation", Input: `# federation schema add-on
+scalar _Any
 scalar _FieldSet
 
 type _Service { sdl: String }
-extend type Query { _service: _Service }
+extend type Query {
+	_service: _Service!
+	_entities(representations: [_Any!]!): [_Entity]!
+}
 
 union _Entity
 
 directive @key(fields: _FieldSet!) on OBJECT | INTERFACE
+directive @external on FIELD_DEFINITION
 `, BuiltIn: true},
 	&ast.Source{Name: "schema.graphql", Input: `# GraphQL schema example
 #
@@ -327,6 +380,12 @@ type Item @key(fields: "id") {
   id: ID!
   name: String!
   done: Boolean
+  fields: _FieldSet
+}
+
+type List @key(fields: "id") {
+  id: ID! @external
+  todos: [Todo!]!
 }
 
 union Thing = Item | Todo
@@ -350,6 +409,24 @@ type Mutation {
 }`},
 )
 
+func (ec *executionContext) resolveEntities(ctx context.Context, reps []map[string]interface{}) (res []federation.Entity, err error) {
+	for _, repr := range reps {
+		typename, _ := repr["__typename"]
+		switch typename {
+		case "Todo":
+			v, _ := ec.unmarshalReprTodo(ctx, repr)
+			res = append(res, v)
+		case "Item":
+			v, _ := ec.unmarshalReprItem(ctx, repr)
+			res = append(res, v)
+		case "List":
+			v, _ := ec.unmarshalReprList(ctx, repr)
+			res = append(res, v)
+		}
+	}
+	return
+}
+
 // endregion ************************** generated!.gotpl **************************
 
 // region    ***************************** args.gotpl *****************************
@@ -357,9 +434,9 @@ type Mutation {
 func (ec *executionContext) dir_key_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
 	var err error
 	args := map[string]interface{}{}
-	var arg0 string
+	var arg0 []string
 	if tmp, ok := rawArgs["fields"]; ok {
-		arg0, err = ec.unmarshalN_FieldSet2string(ctx, tmp)
+		arg0, err = ec.unmarshalN_FieldSet2ᚕstring(ctx, tmp)
 		if err != nil {
 			return nil, err
 		}
@@ -393,6 +470,20 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 		}
 	}
 	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query__entities_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 []map[string]interface{}
+	if tmp, ok := rawArgs["representations"]; ok {
+		arg0, err = ec.unmarshalN_Any2ᚕmap(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["representations"] = arg0
 	return args, nil
 }
 
@@ -540,6 +631,114 @@ func (ec *executionContext) _Item_done(ctx context.Context, field graphql.Collec
 	return ec.marshalOBoolean2ᚖbool(ctx, field.Selections, res)
 }
 
+func (ec *executionContext) _Item_fields(ctx context.Context, field graphql.CollectedField, obj *Item) (ret graphql.Marshaler) {
+	ctx = ec.Tracer.StartFieldExecution(ctx, field)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+		ec.Tracer.EndFieldExecution(ctx)
+	}()
+	rctx := &graphql.ResolverContext{
+		Object:   "Item",
+		Field:    field,
+		Args:     nil,
+		IsMethod: false,
+	}
+	ctx = graphql.WithResolverContext(ctx, rctx)
+	ctx = ec.Tracer.StartFieldResolverExecution(ctx, rctx)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Fields, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*[]string)
+	rctx.Result = res
+	ctx = ec.Tracer.StartFieldChildExecution(ctx)
+	return ec.marshalO_FieldSet2ᚖᚕstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _List_id(ctx context.Context, field graphql.CollectedField, obj *List) (ret graphql.Marshaler) {
+	ctx = ec.Tracer.StartFieldExecution(ctx, field)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+		ec.Tracer.EndFieldExecution(ctx)
+	}()
+	rctx := &graphql.ResolverContext{
+		Object:   "List",
+		Field:    field,
+		Args:     nil,
+		IsMethod: false,
+	}
+	ctx = graphql.WithResolverContext(ctx, rctx)
+	ctx = ec.Tracer.StartFieldResolverExecution(ctx, rctx)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.ID, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !ec.HasError(rctx) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	rctx.Result = res
+	ctx = ec.Tracer.StartFieldChildExecution(ctx)
+	return ec.marshalNID2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _List_todos(ctx context.Context, field graphql.CollectedField, obj *List) (ret graphql.Marshaler) {
+	ctx = ec.Tracer.StartFieldExecution(ctx, field)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+		ec.Tracer.EndFieldExecution(ctx)
+	}()
+	rctx := &graphql.ResolverContext{
+		Object:   "List",
+		Field:    field,
+		Args:     nil,
+		IsMethod: false,
+	}
+	ctx = graphql.WithResolverContext(ctx, rctx)
+	ctx = ec.Tracer.StartFieldResolverExecution(ctx, rctx)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Todos, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !ec.HasError(rctx) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.([]*Todo)
+	rctx.Result = res
+	ctx = ec.Tracer.StartFieldChildExecution(ctx)
+	return ec.marshalNTodo2ᚕᚖgithubᚗcomᚋ99designsᚋgqlgenᚋexampleᚋtodofedᚐTodo(ctx, field.Selections, res)
+}
+
 func (ec *executionContext) _Mutation_createTodo(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	ctx = ec.Tracer.StartFieldExecution(ctx, field)
 	defer func() {
@@ -647,12 +846,59 @@ func (ec *executionContext) _Query__service(ctx context.Context, field graphql.C
 		return graphql.Null
 	}
 	if resTmp == nil {
+		if !ec.HasError(rctx) {
+			ec.Errorf(ctx, "must not be null")
+		}
 		return graphql.Null
 	}
-	res := resTmp.(*federation.Service)
+	res := resTmp.(federation.Service)
 	rctx.Result = res
 	ctx = ec.Tracer.StartFieldChildExecution(ctx)
-	return ec.marshalO_Service2ᚖgithubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚐService(ctx, field.Selections, res)
+	return ec.marshalN_Service2githubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚐService(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Query__entities(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	ctx = ec.Tracer.StartFieldExecution(ctx, field)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+		ec.Tracer.EndFieldExecution(ctx)
+	}()
+	rctx := &graphql.ResolverContext{
+		Object:   "Query",
+		Field:    field,
+		Args:     nil,
+		IsMethod: true,
+	}
+	ctx = graphql.WithResolverContext(ctx, rctx)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Query__entities_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	rctx.Args = args
+	ctx = ec.Tracer.StartFieldResolverExecution(ctx, rctx)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolveEntities(ctx, args["representations"].([]map[string]interface{}))
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !ec.HasError(rctx) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.([]federation.Entity)
+	rctx.Result = res
+	ctx = ec.Tracer.StartFieldChildExecution(ctx)
+	return ec.marshalN_Entity2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚐEntity(ctx, field.Selections, res)
 }
 
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
@@ -2161,6 +2407,28 @@ func (ec *executionContext) unmarshalInputNewTodo(ctx context.Context, obj inter
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalReprTodo(ctx context.Context, repr map[string]interface{}) (federation.Entity, error) {
+	var it Todo
+	var err error
+	return it, err
+}
+
+func (ec *executionContext) unmarshalReprItem(ctx context.Context, repr map[string]interface{}) (federation.Entity, error) {
+	var it Item
+	var err error
+	return it, err
+}
+
+func (ec *executionContext) unmarshalReprList(ctx context.Context, repr map[string]interface{}) (federation.Entity, error) {
+	var it List
+	var err error
+	if v, ok := repr["id"]; ok {
+		it.ID, err = ec.unmarshalNID2string(ctx, v)
+	}
+
+	return it, err
+}
+
 // endregion **************************** input.gotpl *****************************
 
 // region    ************************** interface.gotpl ***************************
@@ -2194,6 +2462,10 @@ func (ec *executionContext) __Entity(ctx context.Context, sel ast.SelectionSet, 
 		return ec._Item(ctx, sel, &obj)
 	case *Item:
 		return ec._Item(ctx, sel, obj)
+	case List:
+		return ec._List(ctx, sel, &obj)
+	case *List:
+		return ec._List(ctx, sel, obj)
 	default:
 		panic(fmt.Errorf("unexpected type %T", obj))
 	}
@@ -2226,6 +2498,40 @@ func (ec *executionContext) _Item(ctx context.Context, sel ast.SelectionSet, obj
 			}
 		case "done":
 			out.Values[i] = ec._Item_done(ctx, field, obj)
+		case "fields":
+			out.Values[i] = ec._Item_fields(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var listImplementors = []string{"List", "_Entity"}
+
+func (ec *executionContext) _List(ctx context.Context, sel ast.SelectionSet, obj *List) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.RequestContext, sel, listImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("List")
+		case "id":
+			out.Values[i] = ec._List_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "todos":
+			out.Values[i] = ec._List_todos(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -2299,6 +2605,23 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			})
 		case "_service":
 			out.Values[i] = ec._Query__service(ctx, field)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&invalids, 1)
+			}
+		case "_entities":
+			field := field
+			out.Concurrently(i, func() (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query__entities(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&invalids, 1)
+				}
+				return res
+			})
 		case "__type":
 			out.Values[i] = ec._Query___type(ctx, field)
 		case "__schema":
@@ -2768,18 +3091,111 @@ func (ec *executionContext) marshalNUser2ᚖgithubᚗcomᚋ99designsᚋgqlgenᚋ
 	return ec._User(ctx, sel, v)
 }
 
-func (ec *executionContext) unmarshalN_FieldSet2string(ctx context.Context, v interface{}) (string, error) {
-	return graphql.UnmarshalString(v)
+func (ec *executionContext) unmarshalN_Any2map(ctx context.Context, v interface{}) (map[string]interface{}, error) {
+	if v == nil {
+		return nil, nil
+	}
+	return graphql.UnmarshalMap(v)
 }
 
-func (ec *executionContext) marshalN_FieldSet2string(ctx context.Context, sel ast.SelectionSet, v string) graphql.Marshaler {
-	res := graphql.MarshalString(v)
+func (ec *executionContext) marshalN_Any2map(ctx context.Context, sel ast.SelectionSet, v map[string]interface{}) graphql.Marshaler {
+	if v == nil {
+		if !ec.HasError(graphql.GetResolverContext(ctx)) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := graphql.MarshalMap(v)
 	if res == graphql.Null {
 		if !ec.HasError(graphql.GetResolverContext(ctx)) {
 			ec.Errorf(ctx, "must not be null")
 		}
 	}
 	return res
+}
+
+func (ec *executionContext) unmarshalN_Any2ᚕmap(ctx context.Context, v interface{}) ([]map[string]interface{}, error) {
+	var vSlice []interface{}
+	if v != nil {
+		if tmp1, ok := v.([]interface{}); ok {
+			vSlice = tmp1
+		} else {
+			vSlice = []interface{}{v}
+		}
+	}
+	var err error
+	res := make([]map[string]interface{}, len(vSlice))
+	for i := range vSlice {
+		res[i], err = ec.unmarshalN_Any2map(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalN_Any2ᚕmap(ctx context.Context, sel ast.SelectionSet, v []map[string]interface{}) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalN_Any2map(ctx, sel, v[i])
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalN_Entity2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚐEntity(ctx context.Context, sel ast.SelectionSet, v []federation.Entity) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		rctx := &graphql.ResolverContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithResolverContext(ctx, rctx)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalO_Entity2githubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚐEntity(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+	return ret
+}
+
+func (ec *executionContext) unmarshalN_FieldSet2ᚕstring(ctx context.Context, v interface{}) ([]string, error) {
+	return federation.UnmarshalFieldSet(v)
+}
+
+func (ec *executionContext) marshalN_FieldSet2ᚕstring(ctx context.Context, sel ast.SelectionSet, v []string) graphql.Marshaler {
+	res := federation.MarshalFieldSet(v)
+	if res == graphql.Null {
+		if !ec.HasError(graphql.GetResolverContext(ctx)) {
+			ec.Errorf(ctx, "must not be null")
+		}
+	}
+	return res
+}
+
+func (ec *executionContext) marshalN_Service2githubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚐService(ctx context.Context, sel ast.SelectionSet, v federation.Service) graphql.Marshaler {
+	return ec.__Service(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalN__Directive2githubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐDirective(ctx context.Context, sel ast.SelectionSet, v introspection.Directive) graphql.Marshaler {
@@ -3054,15 +3470,31 @@ func (ec *executionContext) marshalOString2ᚖstring(ctx context.Context, sel as
 	return ec.marshalOString2string(ctx, sel, *v)
 }
 
-func (ec *executionContext) marshalO_Service2githubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚐService(ctx context.Context, sel ast.SelectionSet, v federation.Service) graphql.Marshaler {
-	return ec.__Service(ctx, sel, &v)
+func (ec *executionContext) marshalO_Entity2githubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚐEntity(ctx context.Context, sel ast.SelectionSet, v federation.Entity) graphql.Marshaler {
+	return ec.__Entity(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalO_Service2ᚖgithubᚗcomᚋ99designsᚋgqlgenᚋpluginᚋfederationᚐService(ctx context.Context, sel ast.SelectionSet, v *federation.Service) graphql.Marshaler {
+func (ec *executionContext) unmarshalO_FieldSet2ᚕstring(ctx context.Context, v interface{}) ([]string, error) {
+	return federation.UnmarshalFieldSet(v)
+}
+
+func (ec *executionContext) marshalO_FieldSet2ᚕstring(ctx context.Context, sel ast.SelectionSet, v []string) graphql.Marshaler {
+	return federation.MarshalFieldSet(v)
+}
+
+func (ec *executionContext) unmarshalO_FieldSet2ᚖᚕstring(ctx context.Context, v interface{}) (*[]string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalO_FieldSet2ᚕstring(ctx, v)
+	return &res, err
+}
+
+func (ec *executionContext) marshalO_FieldSet2ᚖᚕstring(ctx context.Context, sel ast.SelectionSet, v *[]string) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}
-	return ec.__Service(ctx, sel, v)
+	return ec.marshalO_FieldSet2ᚕstring(ctx, sel, *v)
 }
 
 func (ec *executionContext) marshalO__EnumValue2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐEnumValue(ctx context.Context, sel ast.SelectionSet, v []introspection.EnumValue) graphql.Marshaler {

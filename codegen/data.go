@@ -20,6 +20,7 @@ type Data struct {
 	SchemaStr       string
 	Directives      DirectiveList
 	Objects         Objects
+	Entities        Objects
 	Inputs          Objects
 	Interfaces      map[string]*Interface
 	ReferencedTypes map[string]*config.TypeReference
@@ -95,6 +96,11 @@ func BuildData(cfg *config.Config) (*Data, error) {
 			}
 
 			s.Objects = append(s.Objects, obj)
+			for _, dir := range obj.Directives {
+				if dir.Name == "key" {
+					s.Entities = append(s.Entities, obj)
+				}
+			}
 		case ast.InputObject:
 			input, err := b.buildObject(schemaType)
 			if err != nil {
