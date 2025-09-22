@@ -12,9 +12,14 @@ jobs:
         go: ["1.20"] # nancy is a little flaky
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/setup-go@be3c94b385c4f180051c996d336f57a34c397495 # v3.6.1
         with:
           go-version: ${{ matrix.go }}
       - run: go mod download && go list -json -deps all > go.list
-      - uses: sonatype-nexus-community/nancy-github-action@main
+      - uses: sonatype-nexus-community/nancy-github-action@395e2fb168f674f96502e5652103d112899ea369 # main

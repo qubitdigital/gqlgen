@@ -5,6 +5,9 @@ on: [push, pull_request]
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -14,12 +17,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/setup-go@be3c94b385c4f180051c996d336f57a34c397495 # v3.6.1
         with:
           go-version: ${{ matrix.go }}
       - name: Core tests
-        uses: nick-fields/retry@v2
+        uses: step-security/retry@e1d59ce1f574b32f0915e3a8df055cfe9f99be5d # v3.0.4
         with:
           max_attempts: 3
           timeout_minutes: 20
@@ -27,7 +35,7 @@ jobs:
             go mod download
             go test -race ./...
       - name: Example tests
-        uses: nick-fields/retry@v2
+        uses: step-security/retry@e1d59ce1f574b32f0915e3a8df055cfe9f99be5d # v3.0.4
         with:
           max_attempts: 3
           timeout_minutes: 20
